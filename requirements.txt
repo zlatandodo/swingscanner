@@ -1,0 +1,8 @@
+streamlit>=1.30
+pandas>=2.0,<3
+numpy>=1.24
+yfinance>=0.2.40
+tqdm>=4.66
+lxml>=4.9
+beautifulsoup4>=4.12
+requests>=2.31

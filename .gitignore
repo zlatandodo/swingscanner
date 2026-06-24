@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Scanner artifacts (regenerated)
+swing_cache.db
+*.log
+reports/*.html
+reports/latest_results.json
+.tmp/
+
+# OS
+.DS_Store
+
+# Keep the app's data file tracked:
+#   data/latest_results.json  -> committed so Streamlit Cloud has data

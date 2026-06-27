@@ -6,3 +6,4 @@ tqdm>=4.66
 lxml>=4.9
 beautifulsoup4>=4.12
 requests>=2.31
+finvizfinance>=0.14

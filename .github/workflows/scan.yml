@@ -26,8 +26,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run scanner (fast)
-        run: python swing_scanner.py --fast
+      - name: Run scanner (full US universe)
+        run: python swing_scanner.py --universe all
 
       - name: Commit refreshed data
         run: |

@@ -1,12 +1,12 @@
-# Swing Scanner
+# Pullback Scanner
 
-A self-contained Python swing-trading scanner that finds **A+ setups** across the
+A self-contained Python pullback/swing scanner that finds **A+ setups** across the
 **S&P 500 + S&P MidCap 400 + S&P SmallCap 600** (~1,500 liquid names) using only
 `yfinance` for data. It produces both a standalone **HTML report** and a JSON feed
 for an interactive **Streamlit app** you can deploy from GitHub.
 
 > **Two ways to view results**
-> - `swing_report_YYYY-MM-DD.html` — standalone file, opens in any browser, no server.
+> - `pullback_report_YYYY-MM-DD.html` — standalone file, opens in any browser, no server.
 > - `streamlit_app.py` — interactive dashboard (filter by grade, **setup type**,
 >   **market-cap / volume thresholds**, sector, score) with live TradingView charts.
 >   Deployable free on Streamlit Community Cloud.
@@ -48,21 +48,21 @@ click-to-expand TradingView mini-chart per row.
    python swing_scanner.py --fast
    ```
 
-3. **Full run (S&P 500 + Russell 2000, ~12 min)**
+3. **Full run (all US-listed common stocks, ~2,000+ after filtering)**
    ```bash
-   python swing_scanner.py
+   python swing_scanner.py            # --universe all is the default
    ```
 
 4. **Open the report** — it opens automatically in your browser. Files land in:
    ```
-   ./reports/swing_report_YYYY-MM-DD.html
+   ./reports/pullback_report_YYYY-MM-DD.html
    ```
 
 ## CLI
 
 ```bash
 python swing_scanner.py [--fast]
-                        [--universe sp500|russell|both]
+                        [--universe sp500|russell|nasdaq|both|all]
                         [--min-score 55]
                         [--account 100000]
                         [--risk-pct 0.75]
@@ -72,7 +72,7 @@ python swing_scanner.py [--fast]
 | Flag | Default | Notes |
 |------|---------|-------|
 | `--fast` | off | S&P 500 only, skips fundamentals, reuses cache <4h old. Good for intraday refresh. |
-| `--universe` | `both` | `sp500`, `russell`, or `both`. |
+| `--universe` | `all` | `all` = every US-listed common stock (NASDAQ + NYSE/AMEX, ~6,000 raw → ~2,000+ liquid). `nasdaq` = NASDAQ only. `both` = S&P 500+400+600. Also `sp500`, `russell`. |
 | `--min-score` | `40` | Minimum score to include in the report. |
 | `--account` | `100000` | Account size for position sizing. |
 | `--risk-pct` | `0.75` | Risk per trade as % of account. |
@@ -80,6 +80,10 @@ python swing_scanner.py [--fast]
 
 ## How the universe is built
 
+- **`all` (default)** — every US-listed **common stock** from nasdaqtrader.com
+  (`nasdaqlisted.txt` + `otherlisted.txt`): NASDAQ + NYSE + NYSE American, ETFs /
+  warrants / units / rights / preferreds removed by security-name. ~6,000 raw,
+  trimmed to ~2,000+ by the liquidity filter. `nasdaq` = NASDAQ file only.
 - **S&P 500** — scraped live from the Wikipedia "List of S&P 500 companies" page.
 - **Small/Mid-cap (Russell 2000 proxy)** — resolved in this order:
   1. bundled `russell2000.csv` if present (a `Ticker`/`Symbol` column);

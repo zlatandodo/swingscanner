@@ -253,13 +253,94 @@ def load_russell2000() -> list[str]:
     return syms
 
 
+def _clean_listed(sym: str) -> str | None:
+    """Keep common stock / class-share tickers; drop warrants, units, prefs."""
+    sym = str(sym).strip().upper()
+    if not sym or "$" in sym or " " in sym:
+        return None
+    if "." in sym:
+        base, _, suf = sym.partition(".")
+        if len(suf) != 1 or suf not in "ABC":  # class A/B/C only
+            return None
+        sym = base + "-" + suf  # yfinance form (BRK.A -> BRK-A)
+    if len(sym) > 6 or not all(c.isalnum() or c == "-" for c in sym):
+        return None
+    return sym
+
+
+_NONCOMMON = (
+    "warrant", "right", " unit", "units", "preferred", "depositary",
+    "depository", "% note", "subordinated", "debenture", "convertible note",
+    "when issued", "when-issued", "tender", "test stock",
+)
+
+
+def _fetch_nasdaqtrader(url, sym_col, etf_col, test_col) -> list[str]:
+    """Parse a nasdaqtrader.com pipe-delimited symbol-directory file,
+    keeping only common stock (no ETFs, warrants, units, rights, prefs)."""
+    import requests
+    txt = requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
+                       timeout=30).text
+    df = pd.read_csv(io.StringIO(txt), sep="|")
+    df = df[df[test_col].isin(["N", "Y"])]            # drop footer row
+    df = df[df[test_col] == "N"]                      # no test issues
+    if etf_col in df.columns:
+        df = df[df[etf_col] == "N"]                   # no ETFs
+    name_col = "Security Name"
+    out = []
+    for _, r in df.iterrows():
+        name = str(r.get(name_col, "")).lower()
+        if any(k in name for k in _NONCOMMON):
+            continue
+        cs = _clean_listed(r[sym_col])
+        if cs:
+            out.append(cs)
+    return out
+
+
+def load_nasdaq() -> list[str]:
+    """All NASDAQ-listed common stocks (nasdaqtrader.com)."""
+    try:
+        syms = _fetch_nasdaqtrader(
+            "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+            "Symbol", "ETF", "Test Issue")
+        print(f"  NASDAQ: {len(syms)} common stocks from nasdaqtrader")
+        return syms
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! NASDAQ load failed ({e})")
+        return []
+
+
+def load_other_listed() -> list[str]:
+    """NYSE / NYSE American / etc. common stocks (nasdaqtrader.com)."""
+    try:
+        syms = _fetch_nasdaqtrader(
+            "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+            "ACT Symbol", "ETF", "Test Issue")
+        print(f"  NYSE/AMEX: {len(syms)} common stocks from nasdaqtrader")
+        return syms
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! otherlisted load failed ({e})")
+        return []
+
+
 def build_universe(which: str) -> list[str]:
-    """Assemble, dedup, and clean the requested universe."""
+    """Assemble, dedup, and clean the requested universe.
+
+    which: sp500 | russell | nasdaq | both | all
+      - both = S&P 500 + MidCap 400 + SmallCap 600 (~1,500)
+      - all  = every US-listed common stock (NASDAQ + NYSE/AMEX, ~6,000 raw)
+               plus the S&P lists, deduped — liquidity filter trims to ~2,000+
+    """
     syms: list[str] = []
-    if which in ("sp500", "both"):
+    if which in ("sp500", "both", "all"):
         syms += load_sp500()
-    if which in ("russell", "both"):
+    if which in ("russell", "both", "all"):
         syms += load_russell2000()
+    if which in ("nasdaq", "all"):
+        syms += load_nasdaq()
+    if which == "all":
+        syms += load_other_listed()
     # dedup preserving order
     seen, out = set(), []
     for s in syms:
@@ -1238,7 +1319,7 @@ def generate_html(results: list[dict], meta: dict, out_path: str) -> str:
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Swing Scanner &mdash; {meta['date']}</title>
+<title>Pullback Scanner &mdash; {meta['date']}</title>
 <style>
 :root{{--bg:#ffffff;--card:#ffffff;--bd:#d0d7de;--fg:#1f2328;--mut:#656d76;
 --soft:#f6f8fa;--grn:#1a7f37;--red:#cf222e;--amb:#9a6700;--blue:#0969da;}}
@@ -1305,7 +1386,7 @@ border-top:1px solid var(--bd)}}
 .count{{color:var(--mut);font-size:12px;margin-left:auto}}
 </style></head>
 <body><div class="wrap">
-<h1>Swing Scanner &mdash; {meta['date']}</h1>
+<h1>Pullback Scanner &mdash; {meta['date']}</h1>
 <div class="sub">A+ setup scan across {meta['universe_label']} &middot; Yahoo Finance via yfinance</div>
 <div class="regime {regime_cls}">{regime_txt}</div>
 <div class="metrics">
@@ -1502,11 +1583,14 @@ def export_json(results, meta, path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="A+ swing-trade scanner")
+    ap = argparse.ArgumentParser(description="Pullback Scanner — A+ swing setups")
     ap.add_argument("--fast", action="store_true",
                     help="S&P 500 only, skip fundamentals, 4h cache")
-    ap.add_argument("--universe", choices=["sp500", "russell", "both"],
-                    default="both")
+    ap.add_argument("--universe",
+                    choices=["sp500", "russell", "nasdaq", "both", "all"],
+                    default="all",
+                    help="all = every US-listed common stock (~2,000+ after "
+                         "liquidity filter); both = S&P 500+400+600")
     ap.add_argument("--min-score", type=float, default=40.0)
     ap.add_argument("--account", type=float, default=100_000.0)
     ap.add_argument("--risk-pct", type=float, default=0.75)
@@ -1519,7 +1603,7 @@ def main():
     max_age = 4 if args.fast else 24  # hours
 
     print("=" * 60)
-    print(f"SWING SCANNER  ·  {datetime.now():%Y-%m-%d %H:%M}")
+    print(f"PULLBACK SCANNER  ·  {datetime.now():%Y-%m-%d %H:%M}")
     print(f"universe={universe_choice}  fast={args.fast}  "
           f"min_score={args.min_score}  account=${args.account:,.0f}  "
           f"risk={args.risk_pct}%")
@@ -1598,15 +1682,17 @@ def main():
     bull, regime_txt = market_regime()
     os.makedirs(args.output, exist_ok=True)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    out_path = os.path.join(args.output, f"swing_report_{date_str}.html")
+    out_path = os.path.join(args.output, f"pullback_report_{date_str}.html")
     scan_time = f"{(time.time() - t0)/60:.1f}m"
     meta = {
         "date": date_str,
         "universe_label": {
             "sp500": "S&P 500",
             "russell": "Small/Mid-cap (Russell 2000 proxy)",
+            "nasdaq": "NASDAQ-listed",
             "both": "S&P 500 + MidCap 400 + SmallCap 600",
-        }[universe_choice],
+            "all": "All US-listed (NASDAQ + NYSE/AMEX)",
+        }.get(universe_choice, universe_choice),
         "total_scanned": total_scanned,
         "passed_filter": len(kept) - (1 if BENCHMARK in kept else 0),
         "scan_time": scan_time,

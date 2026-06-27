@@ -1,5 +1,5 @@
 """
-Swing Scanner — Streamlit front-end.
+Pullback Scanner — Streamlit front-end.
 
 Loads the precomputed scan results (data/latest_results.json, produced by
 swing_scanner.py) and renders an interactive dashboard: filter by grade,
@@ -22,7 +22,7 @@ import streamlit.components.v1 as components
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(HERE, "data", "latest_results.json")
 
-st.set_page_config(page_title="Swing Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Pullback Scanner", page_icon="📈", layout="wide")
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ def load_data(path: str, mtime: float) -> dict:
 
 
 if not os.path.exists(DATA_PATH):
-    st.title("📈 Swing Scanner")
+    st.title("📈 Pullback Scanner")
     st.error(
         "No data found at `data/latest_results.json`.\n\n"
         "Generate it first by running the scanner:\n\n"
@@ -68,7 +68,7 @@ ALL_GRADES = ["A+", "A", "B+", "B"]
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.title(f"📈 Swing Scanner — {meta.get('date', '')}")
+st.title(f"📈 Pullback Scanner — {meta.get('date', '')}")
 st.caption(f"{meta.get('universe_label', '')} · Yahoo Finance via yfinance")
 
 bull = meta.get("bull", True)

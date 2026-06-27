@@ -302,43 +302,5 @@ else:
     components.html(grid, height=rows * (ch + 40) + 20, scrolling=True)
 
 
-# ---------------------------------------------------------------------------
-# Detailed TradingView chart
-# ---------------------------------------------------------------------------
-st.markdown("### 🔎 Detailed chart (TradingView)")
-if len(fdf):
-    sym = st.selectbox(
-        "Ticker", fdf["ticker"].tolist(),
-        format_func=lambda t: f"{t} — "
-        f"{fdf.loc[fdf['ticker'] == t, 'company'].iloc[0]}")
-    row = fdf[fdf["ticker"] == sym].iloc[0]
-    st.caption(
-        f"**{sym}** · Grade {row['grade']} · Score {row['score']:.0f} · "
-        f"Entry ${row['risk.entry']:.2f} · Stop ${row['risk.stop']:.2f} "
-        f"({row['risk.stop_pct']:.1f}%) · T1 ${row['risk.t1']:.2f} · "
-        f"T2 ${row['risk.t2']:.2f} · R:R {row['risk.rr']:.1f} · "
-        f"Setup: {row['setup_str'] or '—'}")
-    tv = sym.replace("-", ".")
-    widget = f"""
-<div class="tradingview-widget-container" style="height:640px;width:100%">
-  <div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>
-  <script type="text/javascript"
-    src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js"
-    async>
-  {{
-    "autosize": true, "symbol": "{tv}", "interval": "D", "timezone": "Etc/UTC",
-    "theme": "light", "style": "1", "locale": "en", "allow_symbol_change": true,
-    "hide_side_toolbar": false, "withdateranges": true, "save_image": true,
-    "studies": [
-      {{"id": "MASimple@tv-basicstudies", "inputs": {{"length": 50}}}},
-      {{"id": "MASimple@tv-basicstudies", "inputs": {{"length": 200}}}},
-      {{"id": "MAExp@tv-basicstudies", "inputs": {{"length": 21}}}}
-    ]
-  }}
-  </script>
-</div>"""
-    components.html(widget, height=660)
-else:
-    st.info("No setups match the current filters.")
-
+st.caption("Tip: click any ticker (table or gallery) to open it on TradingView.")
 st.caption("For research and educational purposes only. Not investment advice.")

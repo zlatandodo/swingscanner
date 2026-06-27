@@ -167,8 +167,12 @@ st.markdown(f"### {len(fdf)} setups match  ·  of {len(df)} graded")
 # ---------------------------------------------------------------------------
 # Results table
 # ---------------------------------------------------------------------------
+def _tv_url(t):
+    return f"https://www.tradingview.com/chart/?symbol={str(t).replace('-', '.')}"
+
+
 view = pd.DataFrame({
-    "Ticker": fdf["ticker"],
+    "Ticker": fdf["ticker"].apply(_tv_url),   # rendered as a clickable link
     "Company": fdf["company"],
     "Sector": fdf["sector"],
     "Score": fdf["score"],
@@ -200,6 +204,9 @@ st.dataframe(
     hide_index=True,
     height=460,
     column_config={
+        "Ticker": st.column_config.LinkColumn(
+            "Ticker", display_text=r"symbol=(.+)$",
+            help="Click to open the chart on TradingView"),
         "Score": st.column_config.NumberColumn(format="%d"),
         "Price": st.column_config.NumberColumn(format="$%.2f"),
         "MktCap $B": st.column_config.NumberColumn(format="%.1f"),
@@ -221,9 +228,11 @@ st.dataframe(
     },
 )
 
-csv = view.to_csv(index=False).encode()
+view_csv = view.copy()
+view_csv["Ticker"] = fdf["ticker"]   # plain symbols in the export, not URLs
+csv = view_csv.to_csv(index=False).encode()
 st.download_button("⬇️ Download filtered (CSV)", csv,
-                   file_name="swing_setups.csv", mime="text/csv")
+                   file_name="pullback_setups.csv", mime="text/csv")
 
 
 # ---------------------------------------------------------------------------
@@ -264,14 +273,17 @@ else:
                 {"id": "MAExp@tv-basicstudies", "inputs": {"length": 21}},
             ],
         }
-        label = f"{ticker} · {grade} · {score:.0f}"
+        url = f"https://www.tradingview.com/chart/?symbol={sym}"
+        link = (f'<a href="{url}" target="_blank" rel="noopener" '
+                f'style="color:#0969da;text-decoration:none">{ticker} ↗</a>')
         sub = f" · {setup}" if setup else ""
         return (
             '<div style="border:1px solid #d0d7de;border-radius:8px;'
             'overflow:hidden;background:#fff">'
             f'<div style="font:600 12px -apple-system,sans-serif;'
             f'color:#1f2328;padding:5px 8px;border-bottom:1px solid #eaeef2">'
-            f'{label}<span style="color:#8250df;font-weight:400">{sub}</span></div>'
+            f'{link} · {grade} · {score:.0f}'
+            f'<span style="color:#8250df;font-weight:400">{sub}</span></div>'
             f'<div class="tradingview-widget-container" '
             f'style="height:{ch}px;width:100%">'
             '<div class="tradingview-widget-container__widget" '

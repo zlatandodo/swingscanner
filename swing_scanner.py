@@ -584,8 +584,10 @@ def fetch_history(conn, tickers, interval, period, max_age_hours,
             continue
         time.sleep(0.3)  # gentle pacing between batches (avoid 429s)
         for t in batch:
-            sub = _split_group_by(data, t) if len(batch) > 1 else \
-                _split_group_by(data, t) or data
+            sub = _split_group_by(data, t)
+            if sub is None and len(batch) == 1:
+                # single-ticker download → flat (non-grouped) columns
+                sub = data if data is not None and not data.empty else None
             if sub is None or sub.empty:
                 failed.append(t)
                 _log_failed([t], f"no {interval} data")
@@ -611,27 +613,38 @@ def _log_failed(tickers, reason):
         pass
 
 
-def fetch_fundamentals(tickers, workers=20, throttle=0.1) -> dict[str, dict]:
-    """Threaded ticker.info pull for fundamental fields (rate-limited)."""
+def fetch_fundamentals(tickers, workers=8, throttle=0.25) -> dict[str, dict]:
+    """Threaded ticker.info pull for fundamental fields.
+
+    Gentle by default (few workers + per-call throttle + one backoff retry) —
+    a 20-worker burst on ~2k tickers gets the whole batch 429'd by Yahoo.
+    """
     out: dict[str, dict] = {}
 
     def _one(t):
-        time.sleep(throttle)
-        try:
-            info = yf.Ticker(t).info or {}
-            return t, {
-                "shortName": info.get("shortName") or info.get("longName") or t,
-                "sector": info.get("sector") or "—",
-                "marketCap": info.get("marketCap"),
-                "earningsGrowth": info.get("earningsGrowth"),
-                "revenueGrowth": info.get("revenueGrowth"),
-                "trailingEps": info.get("trailingEps"),
-                "recommendationMean": info.get("recommendationMean"),
-                "numberOfAnalystOpinions": info.get("numberOfAnalystOpinions"),
-            }
-        except Exception:  # noqa: BLE001
-            _log_failed([t], "fundamentals fetch failed")
-            return t, {}
+        for attempt in range(2):
+            time.sleep(throttle)
+            try:
+                info = yf.Ticker(t).info or {}
+                if info.get("sector") or info.get("shortName") \
+                        or info.get("marketCap"):
+                    return t, {
+                        "shortName": info.get("shortName")
+                        or info.get("longName") or t,
+                        "sector": info.get("sector") or "—",
+                        "marketCap": info.get("marketCap"),
+                        "earningsGrowth": info.get("earningsGrowth"),
+                        "revenueGrowth": info.get("revenueGrowth"),
+                        "trailingEps": info.get("trailingEps"),
+                        "recommendationMean": info.get("recommendationMean"),
+                        "numberOfAnalystOpinions":
+                            info.get("numberOfAnalystOpinions"),
+                    }
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(1.0 + attempt)   # backoff before the single retry
+        _log_failed([t], "fundamentals fetch failed")
+        return t, {}
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = [ex.submit(_one, t) for t in tickers]

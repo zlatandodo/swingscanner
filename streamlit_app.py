@@ -64,6 +64,32 @@ ALL_TAGS = sorted({t for row in df["tags"] if isinstance(row, list) for t in row
 ALL_SECTORS = sorted(s for s in df["sector"].dropna().unique() if s and s != "—")
 ALL_GRADES = ["A+", "A", "B+", "B"]
 
+# --- Sector relative strength (Finviz, cached & best-effort) ---------------
+try:
+    from sector_strength import rank_sectors
+except Exception:  # noqa: BLE001
+    rank_sectors = None
+
+# yfinance sector names (in the data) -> Finviz sector names (from rank_sectors)
+YF_TO_FINVIZ = {"Financial Services": "Financial"}
+
+
+def _to_finviz(sec):
+    return YF_TO_FINVIZ.get(sec, sec)
+
+
+@st.cache_data(ttl=3600, show_spinner="Loading sector strength…")
+def load_sector_rows():
+    if rank_sectors is None:
+        return []
+    try:
+        return rank_sectors()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+sector_rows = load_sector_rows()
+
 
 # ---------------------------------------------------------------------------
 # Header
@@ -80,6 +106,37 @@ c1.metric("Total Scanned", f"{meta.get('total_scanned', 0):,}")
 c2.metric("Passed Filter", f"{meta.get('passed_filter', 0):,}")
 c3.metric("A+ Setups", int((df["grade"] == "A+").sum()))
 c4.metric("Scan Time", meta.get("scan_time", "—"))
+
+
+# ---------------------------------------------------------------------------
+# Sector relative-strength panel
+# ---------------------------------------------------------------------------
+if sector_rows:
+    leaders3 = ", ".join(r["sector"] for r in sector_rows[:3])
+    with st.expander(f"🧭 Sector strength — leaders: {leaders3}", expanded=True):
+        srank = pd.DataFrame([{
+            "#": i + 1,
+            "Sector": r["sector"],
+            "Score": r["score"],
+            "1d %": r["perf_1d"] * 100,
+            "1w %": r["perf_1w"] * 100,
+            "1m %": r["perf_1m"] * 100,
+            "3m %": r["perf_3m"] * 100,
+        } for i, r in enumerate(sector_rows)])
+        st.dataframe(
+            srank, hide_index=True, use_container_width=True,
+            column_config={
+                "Score": st.column_config.NumberColumn(format="%.3f"),
+                "1d %": st.column_config.NumberColumn(format="%+.2f"),
+                "1w %": st.column_config.NumberColumn(format="%+.2f"),
+                "1m %": st.column_config.NumberColumn(format="%+.2f"),
+                "3m %": st.column_config.NumberColumn(format="%+.2f"),
+            })
+        st.caption("Composite momentum: 1d·10% + 1w·35% + 1m·35% + 3m·20% "
+                   "(Finviz, cached 1h). Use the sidebar to keep only setups "
+                   "in the leading sectors.")
+else:
+    st.caption("🧭 Sector strength unavailable (Finviz rate-limited or offline).")
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +193,22 @@ f_vol_min = st.sidebar.number_input(
 f_sectors = st.sidebar.multiselect("Sector", ALL_SECTORS)
 f_search = st.sidebar.text_input("Search ticker / company")
 
+# leading-sector filter (uses the Finviz ranking)
+only_leaders = False
+leaders = set()
+if sector_rows:
+    st.sidebar.markdown("**Sector strength**")
+    only_leaders = st.sidebar.checkbox("Only leading sectors")
+    lead_n = st.sidebar.number_input(
+        "Top N sectors", min_value=1, max_value=len(sector_rows), value=3,
+        step=1, disabled=not only_leaders)
+    leaders = {r["sector"] for r in sector_rows[:int(lead_n)]}
+
 # ---- apply filters ----
 m = df["grade"].isin(f_grades) & (df["score"] >= f_min_score)
+
+if only_leaders and leaders:
+    m &= df["sector"].apply(lambda s: _to_finviz(s) in leaders)
 
 if f_setups:
     if setup_mode == "All selected":

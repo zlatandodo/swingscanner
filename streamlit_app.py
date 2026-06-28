@@ -145,26 +145,19 @@ else:
 with st.expander("ℹ️  How scoring works & what each setup means"):
     st.markdown(
         """
-**Score 0–100** = sum of 6 independent blocks (below 40 is dropped):
+**Score** = 3 blocks (A+B+C, max 65) rescaled to 0–100 (below 40 is dropped):
 
 | Block | Max | Measures |
 |---|---|---|
 | **A — Trend Template** | 30 | Price > 50/150/200 SMA, MAs stacked (50>150>200), 200-SMA rising, within 25% of 52-wk high |
 | **B — Weinstein Stage 2** | 15 | Weekly: price > 30-wk SMA, 30-wk SMA rising, base breakout |
 | **C — Pullback Quality** | 20 | Pullback to 20/50 EMA + bounce, low pullback volume, healthy 5–20% depth |
-| **D — VCP** | 15 | Volatility contraction (ATR shrinking), multiple tightening swings, volume dry-up |
-| **E — Relative Strength** | 10 | Outperforms SPY over 3 months + rising RS line |
-| **F — Fundamentals** | 10 | EPS YoY > 20%, revenue > 15%, bullish analyst consensus (neutral 5/10 if missing) |
 
 **Grades:** ≥85 → A+ · ≥70 → A · ≥55 → B+ · ≥40 → B
 
 **Setup tags** (added only when that whole block is fully met):
 - **Stage2** — perfect trend template (block A full)
 - **Pullback** — healthy pullback-to-MA (block C full)
-- **VCP** — Minervini volatility contraction (block D full)
-- **RS Leader** — relative-strength leader (block E full)
-- **High EPS** — strong earnings growth
-- **Low Vol Dry** — volume dried up (supply exhaustion)
         """
     )
 
@@ -255,10 +248,6 @@ view = pd.DataFrame({
     "vs50 %": fdf["vs50"],
     "Pullbk %": fdf["pullback_pct"],
     "ATR": fdf["atr"],
-    "VCP": fdf["vcp_score"],
-    "RS↑": fdf["rs_outperf"],
-    "EPS %": fdf.get("eps_gr"),
-    "Rev %": fdf.get("rev_gr"),
     "Entry": fdf["risk.entry"],
     "Stop": fdf["risk.stop"],
     "Stop %": fdf["risk.stop_pct"],
@@ -286,9 +275,6 @@ st.dataframe(
         "vs50 %": st.column_config.NumberColumn(format="%+.1f"),
         "Pullbk %": st.column_config.NumberColumn(format="%.1f"),
         "ATR": st.column_config.NumberColumn(format="%.2f"),
-        "VCP": st.column_config.NumberColumn(format="%d"),
-        "EPS %": st.column_config.NumberColumn(format="%+.0f"),
-        "Rev %": st.column_config.NumberColumn(format="%+.0f"),
         "Entry": st.column_config.NumberColumn(format="$%.2f"),
         "Stop": st.column_config.NumberColumn(format="$%.2f"),
         "Stop %": st.column_config.NumberColumn(format="%.1f"),

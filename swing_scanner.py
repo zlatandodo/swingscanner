@@ -472,6 +472,13 @@ def _init_cache() -> sqlite3.Connection:
                ticker TEXT, interval TEXT, last_updated TEXT,
                PRIMARY KEY (ticker, interval))"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS fundamentals(
+               ticker TEXT PRIMARY KEY, shortName TEXT, sector TEXT,
+               marketCap REAL, earningsGrowth REAL, revenueGrowth REAL,
+               trailingEps REAL, recommendationMean REAL,
+               numberOfAnalystOpinions REAL, last_updated TEXT)"""
+    )
     conn.commit()
     return conn
 
@@ -613,13 +620,36 @@ def _log_failed(tickers, reason):
         pass
 
 
-def fetch_fundamentals(tickers, workers=8, throttle=0.25) -> dict[str, dict]:
-    """Threaded ticker.info pull for fundamental fields.
+_FUND_COLS = ("shortName", "sector", "marketCap", "earningsGrowth",
+              "revenueGrowth", "trailingEps", "recommendationMean",
+              "numberOfAnalystOpinions")
 
-    Gentle by default (few workers + per-call throttle + one backoff retry) —
-    a 20-worker burst on ~2k tickers gets the whole batch 429'd by Yahoo.
+
+def _fund_cache_get(conn, max_age_days=21) -> dict[str, dict]:
+    """Load cached fundamentals that are still fresh."""
+    out = {}
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=max_age_days)).isoformat()
+    for row in conn.execute(
+            f"SELECT ticker,{','.join(_FUND_COLS)} FROM fundamentals "
+            "WHERE last_updated >= ?", (cutoff,)):
+        out[row[0]] = dict(zip(_FUND_COLS, row[1:]))
+    return out
+
+
+def fetch_fundamentals(conn, tickers, workers=8, throttle=0.25
+                       ) -> dict[str, dict]:
+    """Fundamentals for name/sector/mcap, cached in SQLite across runs.
+
+    Only tickers without a fresh cache entry hit Yahoo (gentle: few workers +
+    throttle + one backoff retry — a 20-worker burst on ~2k names gets the
+    whole batch 429'd). Successful fetches are persisted so metadata is never
+    lost again when Yahoo rate-limits a later run.
     """
-    out: dict[str, dict] = {}
+    cached = _fund_cache_get(conn)
+    out = {t: cached[t] for t in tickers if t in cached}
+    need = [t for t in tickers if t not in cached]
+    print(f"  Fundamentals: {len(out)} cached, {len(need)} to fetch")
 
     def _one(t):
         for attempt in range(2):
@@ -647,15 +677,27 @@ def fetch_fundamentals(tickers, workers=8, throttle=0.25) -> dict[str, dict]:
         return t, {}
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(_one, t) for t in tickers]
+        futs = [ex.submit(_one, t) for t in need]
         for fut in tqdm(as_completed(futs), total=len(futs),
                         desc="Fundamentals"):
             try:
                 t, d = fut.result()
-                out[t] = d
             except Exception:  # noqa: BLE001
                 continue
+            if d:
+                out[t] = d
+                _fund_cache_put(conn, t, d)
     return out
+
+
+def _fund_cache_put(conn, ticker, d):
+    conn.execute(
+        f"INSERT OR REPLACE INTO fundamentals "
+        f"(ticker,{','.join(_FUND_COLS)},last_updated) "
+        f"VALUES ({','.join('?' * (len(_FUND_COLS) + 2))})",
+        (ticker, *[d.get(c) for c in _FUND_COLS],
+         datetime.now(timezone.utc).isoformat()))
+    conn.commit()
 
 
 # ============================================================================
@@ -773,58 +815,12 @@ def score_ticker(daily: pd.DataFrame, weekly: pd.DataFrame | None,
     if c_full:
         tags.append("Pullback")
 
-    # ---- BLOCK D: VCP Signature (15) ----
-    D = 0.0
+    # ---- ATR (for risk sizing only — VCP/RS/Fundamentals removed) ----
     atr14 = atr(daily, 14)
     atr_now = last(atr14)
-    atr_series = atr14.dropna()
-    atr_30ago = atr_series.iloc[-31] if len(atr_series) > 31 else np.nan
-    d1 = math.isfinite(atr_now) and math.isfinite(atr_30ago) \
-        and atr_now < atr_30ago * 0.75
-    if d1: D += 5
-    # D2: >=2 successive contracting swings in last 60 bars
-    d2 = _has_contractions(c.tail(60))
-    if d2: D += 5
-    # D3: volume dry-up
-    vol10 = last(sma(v, 10)); vol30 = last(sma(v, 30))
-    d3 = math.isfinite(vol10) and math.isfinite(vol30) and vol10 < vol30 * 0.75
-    if d3: D += 5
-    vcp_score = D
-    if D == 15:
-        tags.append("VCP")
-    if d3:
-        tags.append("Low Vol Dry")
 
-    # ---- BLOCK E: Relative Strength (10) ----
-    E = 0.0
-    rs_ratio = np.nan
-    rs_outperf = False
-    spy_c = spy_daily["Close"].astype(float)
-    if len(c) > 63 and len(spy_c) > 63:
-        stock_ret = price / float(c.iloc[-64]) - 1
-        spy_ret = float(spy_c.iloc[-1]) / float(spy_c.iloc[-64]) - 1
-        if stock_ret > spy_ret:
-            E += 5; rs_outperf = True
-        # RS line rising
-        aligned = pd.concat([c, spy_c], axis=1, join="inner").dropna()
-        if len(aligned) > 21:
-            ratio = aligned.iloc[:, 0] / aligned.iloc[:, 1]
-            rs_ratio = float(ratio.iloc[-1])
-            if ratio.iloc[-1] > ratio.iloc[-21]:
-                E += 5
-    if E == 10:
-        tags.append("RS Leader")
-
-    # ---- BLOCK F: Fundamentals (10) ----
-    if skip_fundamentals or not fund:
-        F = 5.0  # neutral
-        eps_gr = rev_gr = None
-    else:
-        F, eps_gr, rev_gr, high_eps = _score_fundamentals(fund)
-        if high_eps:
-            tags.append("High EPS")
-
-    total = A + B + C + D + E + F
+    # TOTAL = A + B + C (max 65) rescaled to 0-100 so grade bands still apply
+    total = (A + B + C) / 65.0 * 100.0
     grade = grade_for(total)
     if grade is None:
         return None
@@ -839,14 +835,7 @@ def score_ticker(daily: pd.DataFrame, weekly: pd.DataFrame | None,
         "pullback_pct": pullback_pct,
         "atr": atr_now if math.isfinite(atr_now) else 0.0,
         "avg_vol_1m": float(v.tail(21).mean()) if len(v) >= 5 else None,
-        "vcp_score": vcp_score,
-        "rs_ratio": rs_ratio,
-        "rs_outperf": rs_outperf,
-        "eps_gr": (eps_gr * 100) if isinstance(eps_gr, (int, float))
-                  and eps_gr is not None else None,
-        "rev_gr": (rev_gr * 100) if isinstance(rev_gr, (int, float))
-                  and rev_gr is not None else None,
-        "blocks": {"A": A, "B": B, "C": C, "D": D, "E": E, "F": F},
+        "blocks": {"A": A, "B": B, "C": C},
         "tags": tags,
     }
 
@@ -1280,7 +1269,6 @@ def generate_html(results: list[dict], meta: dict, out_path: str) -> str:
         tv = f"https://www.tradingview.com/chart/?symbol={tv_sym}"
         rows_html.append(f"""
 <tr class="row" data-grade="{r['grade']}" data-score="{r['score']}"
-    data-rs="{_fmt(r.get('rs_ratio'), '{:.4f}', '0')}"
     data-sector="{r['sector']}" data-ticker="{r['ticker']}"
     data-company="{r['company'].lower()}"
     data-mcap="{mcap if isinstance(mcap,(int,float)) and math.isfinite(mcap) else 0}"
@@ -1299,10 +1287,6 @@ def generate_html(results: list[dict], meta: dict, out_path: str) -> str:
   <td class="num {pmcls(r['vs50'])}">{_fmt(r['vs50'], '{:+.1f}%')}</td>
   <td class="num">{_fmt(r['pullback_pct'], '{:.1f}%')}</td>
   <td class="num">{_fmt(r['atr'], '{:.2f}')}</td>
-  <td class="num">{_fmt(r['vcp_score'], '{:.0f}')}/15</td>
-  <td class="num {pmcls(1 if r['rs_outperf'] else -1)}">{'&#9650;' if r['rs_outperf'] else '&#9655;'}</td>
-  <td class="num">{_fmt(r.get('eps_gr'), '{:+.0f}%')}</td>
-  <td class="num">{_fmt(r.get('rev_gr'), '{:+.0f}%')}</td>
   <td class="num">{_fmt(r['risk']['entry'], '${:.2f}')}</td>
   <td class="num">{_fmt(r['risk']['stop'], '${:.2f}')}</td>
   <td class="num neg">{_fmt(r['risk']['stop_pct'], '{:.1f}%')}</td>
@@ -1312,7 +1296,7 @@ def generate_html(results: list[dict], meta: dict, out_path: str) -> str:
   <td class="num">{_fmt(r['risk']['pos_pct'], '{:.1f}%')}</td>
   <td class="tags">{tags}</td>
 </tr>
-<tr class="chartrow" id="chart-{i}"><td colspan="25">
+<tr class="chartrow" id="chart-{i}"><td colspan="21">
   <div class="chartbox">
     <div class="charttitle">{r['ticker']} &middot; {r['company']} &middot;
       Entry ${_fmt(r['risk']['entry'],'{:.2f}')} &middot;
@@ -1435,7 +1419,6 @@ border-top:1px solid var(--bd)}}
   <label class="fld">Sort
     <select id="sort" onchange="sortBy(this.value)">
       <option value="score">Score &darr;</option>
-      <option value="rs">RS &darr;</option>
       <option value="mcap">Mkt Cap &darr;</option>
       <option value="avgvol">Avg Vol &darr;</option>
       <option value="grade">Grade</option>
@@ -1449,7 +1432,6 @@ border-top:1px solid var(--bd)}}
 <th>Ticker</th><th>Company</th><th>Sector</th><th>Chart</th><th>Score</th>
 <th>Grade</th><th>Price</th><th>Mkt Cap</th><th>Avg Vol</th>
 <th>vs200MA</th><th>vs50MA</th><th>Pullbk</th><th>ATR</th>
-<th>VCP</th><th>RS</th><th>EPS%</th><th>Rev%</th>
 <th>Entry</th><th>Stop</th><th>Stop%</th><th>T1</th><th>T2</th><th>R:R</th>
 <th>Pos%</th><th>Setup Tags</th>
 </tr></thead><tbody>
@@ -1654,7 +1636,7 @@ def main():
     pf_meta: dict[str, dict] = {}
     if not skip_fund:
         print("\n  Fetching fundamentals …")
-        fundamentals = fetch_fundamentals(cand)
+        fundamentals = fetch_fundamentals(conn, cand)
     else:
         # fast mode: light market-cap lookup on survivors only (for filters)
         print("\n  Fetching market caps …")

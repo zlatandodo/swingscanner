@@ -787,6 +787,8 @@ def score_ticker(daily: pd.DataFrame, weekly: pd.DataFrame | None,
             if bb > 0 and (bt - bb) / bb <= 0.30 and wprice >= bt * 0.95:
                 B += 5; b_hits += 1
         b_full = b_hits == 3
+    if b_full:
+        tags.append("Weinstein")
 
     # ---- BLOCK C: Pullback Quality (20) ----
     C = 0.0

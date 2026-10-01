@@ -157,6 +157,7 @@ with st.expander("ℹ️  How scoring works & what each setup means"):
 
 **Setup tags** (added only when that whole block is fully met):
 - **Stage2** — perfect trend template (block A full)
+- **Weinstein** — weekly Stage-2 confirmed: price > 30-wk SMA, rising, base breakout (block B full)
 - **Pullback** — healthy pullback-to-MA (block C full)
         """
     )

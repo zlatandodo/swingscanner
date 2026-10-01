@@ -104,7 +104,7 @@ regime = meta.get("regime_txt", "")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total Scanned", f"{meta.get('total_scanned', 0):,}")
 c2.metric("Passed Filter", f"{meta.get('passed_filter', 0):,}")
-c3.metric("A+ Setups", int((df["grade"] == "A+").sum()))
+c3.metric("Top (≥85)", int((df["score"] >= 85).sum()))
 c4.metric("Scan Time", meta.get("scan_time", "—"))
 
 
@@ -142,23 +142,61 @@ else:
 # ---------------------------------------------------------------------------
 # Criteria / setup legend
 # ---------------------------------------------------------------------------
-with st.expander("ℹ️  How scoring works & what each setup means"):
+with st.expander("ℹ️  Scoring & setup logic — full legend", expanded=False):
     st.markdown(
         """
-**Score** = 3 blocks (A+B+C, max 65) rescaled to 0–100 (below 40 is dropped):
+### How the score is built
+Each name earns points across **3 independent blocks** (raw max **65**). The raw
+total is **rescaled to 0–100**: `score = (A + B + C) / 65 × 100`.
+Anything below **40** is dropped and never shown.
 
-| Block | Max | Measures |
+#### Block A — Trend Template · max 30  (daily)
+The Minervini Stage-2 structure. **5 points each:**
+1. Price **> 200-day SMA**
+2. Price **> 150-day SMA**
+3. Price **> 50-day SMA**
+4. **MAs stacked**: 50-SMA > 150-SMA > 200-SMA
+5. **200-SMA rising** (higher than 20 days ago)
+6. **Within 25% of the 52-week high** (strong, not extended or broken)
+
+#### Block B — Weinstein Stage 2 · max 15  (weekly)
+Long-horizon confirmation. **5 points each:**
+1. Weekly price **> 30-week SMA**
+2. **30-week SMA rising** over the last 10 weeks
+3. **Base breakout**: ≥12 weeks inside a 30% band and price within 5% of the base top
+
+#### Block C — Pullback Quality · max 20  (daily)
+The healthy dip inside the uptrend.
+- **8 pts** — pulled back to the **20/50-EMA** in the last 10 bars **and** now bouncing (close > close 3 days ago)
+- **7 pts** — **volume contracted** during the drop (below the 20-day average = no heavy selling)
+- **5 pts** — **pullback depth 5–20%** from the recent swing high (shallow = healthy)
+
+### Score colour bands
+The score cell is coloured by tier (this replaces the old A+/A/B+/B letters):
+
+| Colour | Score | Meaning |
 |---|---|---|
-| **A — Trend Template** | 30 | Price > 50/150/200 SMA, MAs stacked (50>150>200), 200-SMA rising, within 25% of 52-wk high |
-| **B — Weinstein Stage 2** | 15 | Weekly: price > 30-wk SMA, 30-wk SMA rising, base breakout |
-| **C — Pullback Quality** | 20 | Pullback to 20/50 EMA + bounce, low pullback volume, healthy 5–20% depth |
+| 🟢 dark green | **85–100** | textbook setup |
+| 🟩 green | **70–84** | strong |
+| 🟨 amber | **55–69** | decent |
+| ⬜ grey | **40–54** | marginal |
 
-**Grades:** ≥85 → A+ · ≥70 → A · ≥55 → B+ · ≥40 → B
+### Setup tags
+Added **only when the whole block scores full marks** — a quick label for *why* a name qualifies:
+- **Stage2** — Block A full → perfect daily trend template
+- **Weinstein** — Block B full → weekly Stage-2 confirmed (above rising 30-wk SMA + base breakout)
+- **Pullback** — Block C full → textbook pullback-to-MA with volume dry-up
 
-**Setup tags** (added only when that whole block is fully met):
-- **Stage2** — perfect trend template (block A full)
-- **Weinstein** — weekly Stage-2 confirmed: price > 30-wk SMA, rising, base breakout (block B full)
-- **Pullback** — healthy pullback-to-MA (block C full)
+A name can be strong on trend (**Stage2**) without a clean **Pullback**, or vice-versa —
+the tags tell you which part is firing.
+
+### Risk levels (per row)
+ATR-based: **Stop** = entry − 1.5×ATR · **T1** = +2×ATR · **T2** = +4×ATR ·
+**R:R** ≈ 2.7 · position size from your account × risk-% ÷ (entry − stop).
+
+### Sector strength
+Independent Finviz momentum ranking (1d·10% + 1w·35% + 1m·35% + 3m·20%).
+Use *Only leading sectors* in the sidebar to keep names in the strongest sectors.
         """
     )
 
@@ -167,7 +205,6 @@ with st.expander("ℹ️  How scoring works & what each setup means"):
 # Sidebar filters
 # ---------------------------------------------------------------------------
 st.sidebar.header("Filters")
-f_grades = st.sidebar.multiselect("Grade", ALL_GRADES, default=ALL_GRADES)
 f_setups = st.sidebar.multiselect(
     "Setup type", ALL_TAGS,
     help="Show only names that match the selected setups.")
@@ -199,7 +236,7 @@ if sector_rows:
     leaders = {r["sector"] for r in sector_rows[:int(lead_n)]}
 
 # ---- apply filters ----
-m = df["grade"].isin(f_grades) & (df["score"] >= f_min_score)
+m = df["score"] >= f_min_score
 
 if only_leaders and leaders:
     m &= df["sector"].apply(lambda s: _to_finviz(s) in leaders)
@@ -236,12 +273,23 @@ def _tv_url(t):
     return f"https://www.tradingview.com/chart/?symbol={str(t).replace('-', '.')}"
 
 
+# score -> colour band (replaces the A+/A/B+/B letter grade)
+SCORE_BANDS = [(85, "#1a7f37", "85–100"), (70, "#2da44e", "70–84"),
+               (55, "#bf8700", "55–69"), (40, "#6e7781", "40–54")]
+
+
+def score_color(v):
+    for thr, col, _ in SCORE_BANDS:
+        if v >= thr:
+            return col
+    return "#6e7781"
+
+
 view = pd.DataFrame({
     "Ticker": fdf["ticker"].apply(_tv_url),   # rendered as a clickable link
     "Company": fdf["company"],
     "Sector": fdf["sector"],
     "Score": fdf["score"],
-    "Grade": fdf["grade"],
     "Price": fdf["price"],
     "MktCap $B": fdf["mcap_b"],
     "AvgVol M": fdf["vol_m"],
@@ -259,8 +307,12 @@ view = pd.DataFrame({
     "Setup": fdf["setup_str"],
 })
 
+styled = view.style.map(
+    lambda v: f"background-color:{score_color(v)};color:#fff;font-weight:700",
+    subset=["Score"])
+
 st.dataframe(
-    view,
+    styled,
     use_container_width=True,
     hide_index=True,
     height=460,
@@ -317,7 +369,7 @@ else:
     gal = fdf.head(max_n).reset_index(drop=True)
     ch = 300  # per-chart height (px)
 
-    def _tv_cell(ticker, grade, score, setup):
+    def _tv_cell(ticker, score, setup):
         sym = str(ticker).replace("-", ".")
         cfg = {
             "autosize": True, "symbol": sym, "interval": "D",
@@ -335,12 +387,14 @@ else:
         link = (f'<a href="{url}" target="_blank" rel="noopener" '
                 f'style="color:#0969da;text-decoration:none">{ticker} ↗</a>')
         sub = f" · {setup}" if setup else ""
+        band = score_color(score)
         return (
-            '<div style="border:1px solid #d0d7de;border-radius:8px;'
-            'overflow:hidden;background:#fff">'
+            f'<div style="border:1px solid #d0d7de;border-top:3px solid {band};'
+            'border-radius:8px;overflow:hidden;background:#fff">'
             f'<div style="font:600 12px -apple-system,sans-serif;'
             f'color:#1f2328;padding:5px 8px;border-bottom:1px solid #eaeef2">'
-            f'{link} · {grade} · {score:.0f}'
+            f'{link} · <span style="color:{band};font-weight:700">'
+            f'{score:.0f}</span>'
             f'<span style="color:#8250df;font-weight:400">{sub}</span></div>'
             f'<div class="tradingview-widget-container" '
             f'style="height:{ch}px;width:100%">'
@@ -352,7 +406,7 @@ else:
             f'{json.dumps(cfg)}</script></div></div>')
 
     cells = "".join(
-        _tv_cell(r["ticker"], r["grade"], r["score"], r["setup_str"])
+        _tv_cell(r["ticker"], r["score"], r["setup_str"])
         for _, r in gal.iterrows())
     grid = (f'<div style="display:grid;'
             f'grid-template-columns:repeat({ncols},1fr);gap:10px">{cells}</div>')

@@ -1,13 +1,10 @@
 name: Refresh scan data
 
-# Optional: re-runs the scanner on a schedule and commits the updated
-# data/latest_results.json so the deployed Streamlit app stays fresh.
-# Note: Yahoo Finance can rate-limit CI runners; --fast (S&P 500) is the
-# safest in CI. Trigger manually any time via the "Run workflow" button.
+# Manual only: run from the Actions tab via "Run workflow" when you want to
+# refresh data/latest_results.json on GitHub. (Schedule removed on purpose —
+# it was auto-committing and clobbering locally refreshed data.)
 
 on:
-  schedule:
-    - cron: "30 21 * * 1-5"   # weekdays ~17:30 ET (after the US close)
   workflow_dispatch: {}
 
 permissions:

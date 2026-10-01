@@ -625,7 +625,7 @@ _FUND_COLS = ("shortName", "sector", "marketCap", "earningsGrowth",
               "numberOfAnalystOpinions")
 
 
-def _fund_cache_get(conn, max_age_days=21) -> dict[str, dict]:
+def _fund_cache_get(conn, max_age_days=120) -> dict[str, dict]:
     """Load cached fundamentals that are still fresh."""
     out = {}
     cutoff = (datetime.now(timezone.utc)
